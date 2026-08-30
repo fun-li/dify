@@ -9,7 +9,6 @@ from flask import Flask
 from sqlalchemy.orm import Session
 from werkzeug.exceptions import Forbidden, Unauthorized
 
-from configs import dify_config
 from controllers.openapi.auth.context import Context
 from controllers.openapi.auth.pipelines import (
     AccountPipeline,
@@ -160,13 +159,13 @@ def test_fixed_requirements_reproduce_the_two_pipelines() -> None:
 
 @pytest.mark.parametrize("edition", [DeploymentEdition.COMMUNITY, DeploymentEdition.ENTERPRISE])
 def test_the_external_sso_gate_refuses_a_non_enterprise_edition(
-    edition: DeploymentEdition, sqlite_session: Session, monkeypatch: pytest.MonkeyPatch
+    edition: DeploymentEdition, sqlite_session: Session, config_overrides: Callable[..., None]
 ) -> None:
     """The gate that keeps a `dfoe_` token issued before a downgrade from working
     on the routes an account shares with it - the ones no `edition=` can cover,
     because the account still has to reach them.
     """
-    monkeypatch.setattr(dify_config, "DEPLOYMENT_EDITION", edition)
+    config_overrides(DEPLOYMENT_EDITION=edition)
     subject = sso_subject()
 
     with patch(FEATURES, return_value=system_features(license_status=LicenseStatus.ACTIVE)):
@@ -178,12 +177,12 @@ def test_the_external_sso_gate_refuses_a_non_enterprise_edition(
 
 
 def test_the_external_sso_gate_checks_the_edition_before_the_licence(
-    sqlite_session: Session, monkeypatch: pytest.MonkeyPatch
+    sqlite_session: Session, config_overrides: Callable[..., None]
 ) -> None:
     """Same order as the router's endpoint-level gate: a CE deployment answers
     about the edition and never reaches the licence.
     """
-    monkeypatch.setattr(dify_config, "DEPLOYMENT_EDITION", DeploymentEdition.COMMUNITY)
+    config_overrides(DEPLOYMENT_EDITION=DeploymentEdition.COMMUNITY)
     subject = sso_subject()
 
     with patch(FEATURES, side_effect=never_reached):

@@ -109,6 +109,7 @@ from services.end_user_service import EndUserService
 from services.enterprise.enterprise_service import EnterpriseService
 from services.entities.feature_entities import LicenseStatus, SystemFeatureModel
 from services.feature_service import FeatureService
+from tests.unit_tests.config_override import apply_config_overrides
 
 ADMITTED = 418
 
@@ -1198,13 +1199,10 @@ def _run_case(
     token_rows: dict[str, ResolvedRow],
     monkeypatch: pytest.MonkeyPatch,
 ) -> TestResponse:
-    from configs import dify_config
-
     edition = scenario.edition or (
         DeploymentEdition.ENTERPRISE if Trait.ENTERPRISE_ONLY in route.traits else DeploymentEdition.COMMUNITY
     )
-    monkeypatch.setattr(dify_config, "DEPLOYMENT_EDITION", edition)
-    monkeypatch.setattr(dify_config, "RBAC_ENABLED", scenario.rbac_enabled)
+    apply_config_overrides(monkeypatch, DEPLOYMENT_EDITION=edition, RBAC_ENABLED=scenario.rbac_enabled)
     monkeypatch.setattr(
         oauth_bearer_module,
         "_authenticator",
