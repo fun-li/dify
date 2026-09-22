@@ -66,6 +66,7 @@ const AppInfoModals = ({
   const { t } = useTranslation()
   const [confirmDeleteInput, setConfirmDeleteInput] = useState('')
   const [isSecretExporting, setIsSecretExporting] = useState(false)
+  const exportConfirmLabelId = React.useId()
   const isDeleteConfirmDisabled = confirmDeleteInput !== appDetail.name
   const exportDialogMode =
     secretEnvList.length > 0 ? 'secret' : activeModal === 'exportWarning' ? 'warning' : null
@@ -149,7 +150,7 @@ const AppInfoModals = ({
                 {t(($) => $.deleteAppConfirmContent, { ns: 'app' })}
               </AlertDialogDescription>
               <Field name="confirm-app-name" className="mt-2 gap-0">
-                <FieldLabel className="mb-1 block py-0 system-sm-regular text-text-secondary">
+                <FieldLabel className="system-sm-regular">
                   <Trans
                     i18nKey={($) => $.deleteAppConfirmInputLabel}
                     ns="app"
@@ -223,11 +224,14 @@ const AppInfoModals = ({
                 <AlertDialogConfirmButton
                   tone="default"
                   loading={isExporting}
+                  aria-labelledby={exportConfirmLabelId}
                   onClick={handleConfirmExport}
                 >
-                  {isExporting
-                    ? t(($) => $['operation.exporting'], { ns: 'common' })
-                    : t(($) => $['operation.confirm'], { ns: 'common' })}
+                  <span id={exportConfirmLabelId}>
+                    {isExporting
+                      ? t(($) => $['operation.exporting'], { ns: 'common' })
+                      : t(($) => $['operation.confirm'], { ns: 'common' })}
+                  </span>
                 </AlertDialogConfirmButton>
               </AlertDialogActions>
             </AlertDialogContent>

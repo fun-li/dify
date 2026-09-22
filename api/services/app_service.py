@@ -1,24 +1,22 @@
 import json
 import logging
-from collections.abc import Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Literal, NotRequired, TypedDict, cast, override
 
 import sqlalchemy as sa
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, JsonValue
 from sqlalchemy import ColumnElement, delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from configs import dify_config
 from constants.model_template import default_app_templates
-from core.agent.entities import AgentToolEntity
 from core.agent.publish_visibility import agent_has_workflow_callable_active_snapshot
+from core.agent.tool_configuration import mask_agent_tool_parameters
 from core.errors.error import LLMBadRequestError, ProviderTokenNotInitError
 from core.model_manager import ModelManager
-from core.tools.tool_manager import ToolManager
-from core.tools.utils.configuration import ToolParameterConfigurationManager
 from enums import DeploymentEdition
 from events.app_event import app_was_created, app_was_deleted, app_was_updated
 from extensions.ext_database import db  # noqa: F401
@@ -49,8 +47,9 @@ from services.agent.workspace_service import AgentWorkspaceService
 from services.billing_service import BillingService
 from services.enterprise import rbac_service as enterprise_rbac_service
 from services.enterprise.enterprise_service import EnterpriseService
-from services.feature_service import FeatureService
 from services.openapi.visibility import apply_openapi_gate, is_openapi_visible
+from services.rbac_agent_access_service import initialize_agent_rbac_access
+from services.system_feature_service import SystemFeatureService
 from services.tag_service import TagService
 from tasks.collect_agent_resources_task import enqueue_agent_resource_collection
 from tasks.remove_app_and_related_data_task import remove_app_and_related_data_task
@@ -72,6 +71,38 @@ RECENT_APP_MODES: tuple[RecentAppMode, ...] = (
     AppMode.ADVANCED_CHAT,
     AppMode.AGENT_CHAT,
 )
+
+
+@dataclass(frozen=True)
+class _CreatedApp:
+    tenant_id: str
+    creator_account_id: str
+    app_id: str
+    backing_agent_id: str | None
+
+
+def _initialize_created_app_access(created: _CreatedApp) -> None:
+    enterprise_rbac_service.try_sync_creator_access_policy_member_bindings(
+        created.tenant_id,
+        created.creator_account_id,
+        enterprise_rbac_service.RBACResourceType.APP,
+        created.app_id,
+    )
+
+
+def _initialize_created_agent_access(created: _CreatedApp) -> None:
+    if created.backing_agent_id is None:
+        raise ValueError(f"agent app {created.app_id} was created without a backing agent")
+    initialize_agent_rbac_access(
+        tenant_id=created.tenant_id,
+        agent_id=created.backing_agent_id,
+        creator_account_id=created.creator_account_id,
+    )
+
+
+_CREATED_APP_ACCESS_INITIALIZERS: dict[AppMode, Callable[[_CreatedApp], None]] = {
+    AppMode.AGENT: _initialize_created_agent_access,
+}
 
 
 class AppListBaseParams(BaseModel):
@@ -307,13 +338,6 @@ class AppService:
         return session.get(App, app_id)
 
     @staticmethod
-    def get_normal_app_by_id(
-        app_id: str,
-        session: Session,
-    ) -> App | None:
-        return session.scalar(select(App).where(App.id == app_id, App.status == "normal").limit(1))
-
-    @staticmethod
     def get_visible_app_by_id(
         app_id: str,
         session: Session,
@@ -331,25 +355,6 @@ class AppService:
         if not app_ids:
             return []
         return list(session.execute(apply_openapi_gate(select(App).where(App.id.in_(list(app_ids))))).scalars().all())
-
-    @staticmethod
-    def find_visible_apps_by_name(
-        session: Session,
-        *,
-        name: str,
-        tenant_id: str,
-    ) -> list[App]:
-        return list(
-            session.execute(
-                apply_openapi_gate(
-                    select(App).where(
-                        App.name == name,
-                        App.tenant_id == tenant_id,
-                        App.status == "normal",
-                    )
-                )
-            ).scalars()
-        )
 
     def get_paginate_apps(
         self,
@@ -670,12 +675,13 @@ class AppService:
         # Created in the same transaction so the App and its backing Agent persist
         # atomically; the Agent Soul (model/prompt/tools) is configured afterward
         # in the Composer.
+        backing_agent: Agent | None = None
         if app_mode == AppMode.AGENT:
             from services.agent.roster_service import AgentRosterService
 
             icon_type = AgentIconType(params.icon_type) if params.icon_type else None
             try:
-                AgentRosterService(session).create_backing_agent_for_app(
+                backing_agent = AgentRosterService(session).create_backing_agent_for_app(
                     tenant_id=tenant_id,
                     account_id=account.id,
                     app_id=app.id,
@@ -694,23 +700,49 @@ class AppService:
 
         # Preserve the original commit-before-signal ordering for telemetry.
         session.commit()
-        app_was_created.send(app, account=account, session=session)
+        self.finalize_created_app(
+            app=app,
+            backing_agent_id=backing_agent.id if backing_agent else None,
+            account=account,
+            session=session,
+        )
+        return app
+
+    def finalize_created_app(
+        self,
+        *,
+        app: App,
+        backing_agent_id: str | None,
+        account: Account,
+        session: Session,
+        created_records_initialized: bool = False,
+    ) -> None:
+        """Run post-commit App creation hooks and external access initialization."""
+
+        app_was_created.send(
+            app,
+            account=account,
+            session=session,
+            created_records_initialized=created_records_initialized,
+        )
         session.commit()
-        enterprise_rbac_service.try_sync_creator_access_policy_member_bindings(
-            tenant_id,
-            account.id,
-            enterprise_rbac_service.RBACResourceType.APP,
-            app.id,
+        app_mode = app.mode
+        initialize_access = _CREATED_APP_ACCESS_INITIALIZERS.get(app_mode, _initialize_created_app_access)
+        initialize_access(
+            _CreatedApp(
+                tenant_id=app.tenant_id,
+                creator_account_id=account.id,
+                app_id=app.id,
+                backing_agent_id=backing_agent_id,
+            )
         )
 
-        if FeatureService.get_system_features().webapp_auth.enabled:
+        if SystemFeatureService.is_webapp_auth_enabled():
             # update web app setting as private
             EnterpriseService.WebAppAuth.update_app_access_mode(app.id, "private")
 
         if dify_config.DEPLOYMENT_EDITION == DeploymentEdition.CLOUD:
             BillingService.clean_billing_info_cache(app.tenant_id)
-
-        return app
 
     def get_app(self, app: App, *, session: Session) -> App:
         """
@@ -723,42 +755,12 @@ class AppService:
             model_config = app.app_model_config_with_session(session=session)
             if not model_config:
                 return app
-            agent_mode = model_config.agent_mode_dict
-            # decrypt agent tool parameters if it's secret-input
-            for tool in agent_mode.get("tools") or []:
-                if not isinstance(tool, dict) or len(tool.keys()) <= 3:
-                    continue
-                typed_tool = {key: value for key, value in tool.items() if isinstance(key, str)}
-                if len(typed_tool) != len(tool):
-                    continue
-                agent_tool_entity = AgentToolEntity.model_validate(typed_tool)
-                # get tool
-                try:
-                    tool_runtime = ToolManager.get_agent_tool_runtime(
-                        tenant_id=current_user.current_tenant_id,
-                        app_id=app.id,
-                        agent_tool=agent_tool_entity,
-                        user_id=current_user.id,
-                    )
-                    manager = ToolParameterConfigurationManager(
-                        tenant_id=current_user.current_tenant_id,
-                        tool_runtime=tool_runtime,
-                        provider_name=agent_tool_entity.provider_id,
-                        provider_type=agent_tool_entity.provider_type,
-                        identity_id=f"AGENT.{app.id}",
-                    )
-
-                    # get decrypted parameters
-                    if agent_tool_entity.tool_parameters:
-                        parameters = manager.decrypt_tool_parameters(agent_tool_entity.tool_parameters or {})
-                        masked_parameter = manager.mask_tool_parameters(parameters or {})
-                    else:
-                        masked_parameter = {}
-
-                    # override tool parameters
-                    tool["tool_parameters"] = masked_parameter
-                except Exception:
-                    logger.exception("Failed to mask agent tool parameters for tool %s", agent_tool_entity.tool_name)
+            agent_mode = mask_agent_tool_parameters(
+                agent_mode=cast(Mapping[str, JsonValue], model_config.agent_mode_dict),
+                app_id=app.id,
+                tenant_id=current_user.current_tenant_id,
+                user_id=current_user.id,
+            )
 
             # override agent mode
             if model_config:
@@ -772,9 +774,12 @@ class AppService:
                 def __init__(self, app):
                     self.__dict__.update(app.__dict__)
 
-                @property
                 @override
-                def app_model_config(self):
+                def app_model_config_with_session(self, *, session: Session) -> AppModelConfig | None:
+                    # Hand back the in-memory config the masking pass above produced, and
+                    # deliberately ignore `session`: re-reading the row here would undo the
+                    # masking. Response paths resolve the config through this accessor
+                    # (`AppResponseView.app_model_config`), so the override has to sit here.
                     return model_config
 
             app = ModifiedApp(app)
@@ -1155,7 +1160,7 @@ class AppService:
         )
 
         # clean up web app settings
-        if FeatureService.get_system_features().webapp_auth.enabled:
+        if SystemFeatureService.is_webapp_auth_enabled():
             EnterpriseService.WebAppAuth.cleanup_webapp(app.id)
 
         if dify_config.DEPLOYMENT_EDITION == DeploymentEdition.CLOUD:

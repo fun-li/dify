@@ -30,8 +30,6 @@ type PermissionTooltipWrapperProps = {
   show: boolean
 }
 
-const permissionTooltipClassName = 'w-[112px] text-left'
-
 function PermissionTooltipWrapper({
   children,
   className,
@@ -40,8 +38,9 @@ function PermissionTooltipWrapper({
   show,
 }: PermissionTooltipWrapperProps) {
   const trigger = (
-    <span aria-label={show ? content : undefined} className={cn('inline-flex', className)}>
+    <span className={cn('inline-flex', className)}>
       {children}
+      {show && <span className="sr-only">{content}</span>}
     </span>
   )
 
@@ -50,7 +49,7 @@ function PermissionTooltipWrapper({
   return (
     <Tooltip>
       <TooltipTrigger render={trigger} />
-      <TooltipContent placement={placement} sideOffset={8} className={permissionTooltipClassName}>
+      <TooltipContent placement={placement} sideOffset={8}>
         {content}
       </TooltipContent>
     </Tooltip>
@@ -166,11 +165,7 @@ export function IntegrationSidebarUtilityActions({
         <Popover>
           <PopoverTrigger
             render={
-              <Button
-                variant="ghost"
-                className={sidebarUtilityActionClassName}
-                aria-label={permissionsLabel}
-              >
+              <Button variant="ghost" className={sidebarUtilityActionClassName}>
                 <span aria-hidden className="flex size-5 shrink-0 items-center justify-center">
                   <span className="i-ri-equalizer-2-line size-4" />
                 </span>

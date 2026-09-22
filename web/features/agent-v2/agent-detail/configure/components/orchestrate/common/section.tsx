@@ -4,7 +4,7 @@ import type { ReactNode } from 'react'
 import type { AgentBuildDraftChangeSection } from '../build-draft-changes-context'
 import { cn } from '@langgenius/dify-ui/cn'
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from '@langgenius/dify-ui/collapsible'
-import { Infotip } from '@/app/components/base/infotip'
+import { Infotip, InfotipContent, InfotipTrigger } from '@langgenius/dify-ui/infotip'
 import { AgentBuildDraftChangeDot } from '../build-draft-change-dot'
 import { useIsAgentBuildDraftSectionChanged } from '../build-draft-changes-context'
 
@@ -70,17 +70,16 @@ export function ConfigureSection({
           <div className={cn('group/collapse-title flex min-w-0 items-center', titleRowClassName)}>
             <Heading id={labelId} className="relative min-w-0 shrink-0">
               {isBuildDraftChanged && <AgentBuildDraftChangeDot />}
-              <CollapsibleTrigger className="h-6 min-h-0 w-auto max-w-full justify-start gap-0 rounded-sm px-0 text-text-secondary hover:not-data-disabled:bg-transparent hover:not-data-disabled:text-text-secondary data-panel-open:text-text-secondary">
+              <CollapsibleTrigger className="flex h-6 min-h-0 max-w-full touch-manipulation items-center justify-start gap-0 rounded-sm system-sm-medium text-text-secondary outline-hidden select-none focus-visible:ring-2 focus-visible:ring-state-accent-solid">
                 <span className="min-w-0 truncate system-sm-semibold-uppercase">{label}</span>
               </CollapsibleTrigger>
             </Heading>
             {hasTip && (
-              <Infotip
-                aria-label={tipAriaLabel}
-                className="ml-0.5 size-3.5"
-                popupClassName="max-w-64"
-              >
-                {tip}
+              <Infotip>
+                <InfotipTrigger aria-label={tipAriaLabel} className="ml-0.5 size-3.5" />
+                <InfotipContent aria-label={tipAriaLabel} className="max-w-64">
+                  {tip}
+                </InfotipContent>
               </Infotip>
             )}
             <span

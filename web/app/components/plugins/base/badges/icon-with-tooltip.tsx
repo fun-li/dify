@@ -23,8 +23,9 @@ const IconWithTooltip: FC<IconWithTooltipProps> = ({
   const iconClassName = cn('size-5', className)
   const Icon = isDark ? BadgeIconDark : BadgeIconLight
   const icon = (
-    <span aria-label={popupContent} className="flex shrink-0 items-center justify-center">
-      <Icon className={iconClassName} />
+    <span className="flex shrink-0 items-center justify-center">
+      <Icon aria-hidden={!!popupContent} className={iconClassName} />
+      {popupContent && <span className="sr-only">{popupContent}</span>}
     </span>
   )
 
@@ -33,9 +34,7 @@ const IconWithTooltip: FC<IconWithTooltipProps> = ({
   return (
     <Tooltip>
       <TooltipTrigger render={icon} />
-      <TooltipContent className="border-[0.5px] border-components-panel-border bg-components-tooltip-bg p-1.5 system-xs-medium text-text-secondary">
-        {popupContent}
-      </TooltipContent>
+      <TooltipContent>{popupContent}</TooltipContent>
     </Tooltip>
   )
 }

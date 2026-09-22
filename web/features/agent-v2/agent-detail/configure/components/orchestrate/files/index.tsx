@@ -12,11 +12,12 @@ import {
   FileTreeIcon,
   FileTreeLabel,
 } from '@langgenius/dify-ui/file-tree'
+import { Infotip, InfotipContent, InfotipTrigger } from '@langgenius/dify-ui/infotip'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { noop } from 'es-toolkit/function'
 import { useAtomValue, useSetAtom } from 'jotai'
 import { useCallback, useRef, useState } from 'react'
 import { Trans, useTranslation } from 'react-i18next'
-import { Infotip } from '@/app/components/base/infotip'
 import { useDocLink } from '@/context/i18n'
 import { agentComposerDraftAtom } from '@/features/agent-v2/agent-composer/store'
 import {
@@ -25,7 +26,7 @@ import {
   removeAgentFileAtom,
   upsertAgentFileAtom,
 } from '@/features/agent-v2/agent-composer/store-modules/files'
-import { consoleQuery } from '@/service/client'
+import { consoleQuery } from '@/service/console'
 import { downloadBlob, downloadUrl } from '@/utils/download'
 import { useRegisterAgentOrchestrateAddAction } from '../add-actions-context'
 import { ConfigureSectionAddButton } from '../common/add-button'
@@ -145,6 +146,7 @@ function AgentFileItem({
         },
       },
     }),
+    staleTime: 0,
     enabled: shouldDownloadPreviewFile && !apiContext.workflow,
   })
   const workflowDownloadQuery = useQuery({
@@ -161,6 +163,7 @@ function AgentFileItem({
         },
       },
     }),
+    staleTime: 0,
     enabled: shouldDownloadPreviewFile && !!apiContext.workflow,
   })
   const downloadQuery = apiContext.workflow ? workflowDownloadQuery : agentDownloadQuery
@@ -179,8 +182,8 @@ function AgentFileItem({
 
       const fileName = getAgentFilePreviewKey(targetFile)
       if (apiContext.workflow) {
-        const result = await queryClient.fetchQuery(
-          consoleQuery.apps.byAppId.agent.config.files.byName.download.get.queryOptions({
+        const result = await queryClient.query({
+          ...consoleQuery.apps.byAppId.agent.config.files.byName.download.get.queryOptions({
             input: {
               params: {
                 app_id: apiContext.workflow.appId,
@@ -193,13 +196,14 @@ function AgentFileItem({
               },
             },
           }),
-        )
+          staleTime: 0,
+        })
         downloadUrl({ url: result.url, fileName: targetFile.name })
         return
       }
 
-      const result = await queryClient.fetchQuery(
-        consoleQuery.agent.byAgentId.config.files.byName.download.get.queryOptions({
+      const result = await queryClient.query({
+        ...consoleQuery.agent.byAgentId.config.files.byName.download.get.queryOptions({
           input: {
             params: {
               agent_id: apiContext.agentId,
@@ -211,19 +215,26 @@ function AgentFileItem({
             },
           },
         }),
-      )
+        staleTime: 0,
+      })
       downloadUrl({ url: result.url, fileName: targetFile.name })
     },
     [apiContext, queryClient],
   )
+  const downloadFileAction = useCallback(
+    (targetFile: AgentFileNode) => {
+      void downloadFile(targetFile).catch(noop)
+    },
+    [downloadFile],
+  )
   const handleDownload = useCallback(
-    async (event: MouseEvent<HTMLButtonElement>) => {
+    (event: MouseEvent<HTMLButtonElement>) => {
       if (file.isMissing) return
 
       event.stopPropagation()
-      await downloadFile(file)
+      downloadFileAction(file)
     },
-    [downloadFile, file],
+    [downloadFileAction, file],
   )
   const handlePreviewOpenChange = useCallback(
     (open: boolean) => {
@@ -268,15 +279,15 @@ function AgentFileItem({
             filePreview: {
               binary: previewQuery.data?.binary,
               content: selectedPreviewFile.virtualContent ?? previewQuery.data?.text ?? undefined,
-              downloadUrl: downloadQuery.data?.url,
+              downloadUrl: downloadQuery.isFetching ? undefined : downloadQuery.data?.url,
               fileName: selectedPreviewFile.name,
               isDownloadError: downloadQuery.isError,
-              isDownloadLoading: shouldDownloadPreviewFile && downloadQuery.isPending,
+              isDownloadLoading: shouldDownloadPreviewFile && downloadQuery.isFetching,
               isError: !isVirtualPreviewFile && previewQuery.isError,
               isImage: isImagePreviewFile,
               isLoading: !isVirtualPreviewFile && previewQuery.isPending,
             },
-            onDownloadFile: () => downloadFile(selectedPreviewFile),
+            onDownloadFile: () => downloadFileAction(selectedPreviewFile),
             onSelectFile: (selectedFile) => setSelectedFileId(selectedFile.id),
             selectedFileId: selectedFileId ?? file.id,
             sections: [],
@@ -352,13 +363,16 @@ function AgentBuildNoteInfotip() {
   const docLink = useDocLink()
 
   return (
-    <Infotip
-      aria-label={t(($) => $['agentDetail.configure.files.buildNote.tooltip'])}
-      className="size-5 text-text-quaternary hover:text-text-quaternary"
-      iconSize="large"
-      popupClassName="w-[230px] rounded-xl bg-components-tooltip-bg px-4 py-3.5 text-text-secondary shadow-lg backdrop-blur-[5px]"
-    >
-      <p className="body-xs-regular text-text-secondary">
+    <Infotip>
+      <InfotipTrigger
+        aria-label={t(($) => $['agentDetail.configure.files.buildNote.tooltip'])}
+        className="size-5 hover:text-text-quaternary"
+        iconSize="large"
+      />
+      <InfotipContent
+        aria-label={t(($) => $['agentDetail.configure.files.buildNote.tooltip'])}
+        className="w-57.5"
+      >
         <Trans
           i18nKey={($) => $['agentDetail.configure.files.buildNote.richTooltip']}
           ns="agentV2"
@@ -366,7 +380,7 @@ function AgentBuildNoteInfotip() {
             docLink: <DocsLink href={docLink('/use-dify/build/new-agent/build#the-build-note')} />,
           }}
         />
-      </p>
+      </InfotipContent>
     </Infotip>
   )
 }

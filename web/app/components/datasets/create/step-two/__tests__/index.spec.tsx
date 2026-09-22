@@ -1,9 +1,14 @@
-import type { Model } from '@/app/components/header/account-setting/model-provider-page/declarations'
+import type {
+  GetWorkspacesCurrentModelsModelTypesByModelTypeData,
+  ProviderWithModelsResponse,
+} from '@dify/contracts/api/console/workspaces/types.gen'
+import type { OperationKey } from '@orpc/tanstack-query'
 import type { DataSourceProvider, NotionPage } from '@/models/common'
 import type {
   CrawlOptions,
   CrawlResultItem,
   CustomFile,
+  DataSet,
   FileIndexingEstimateResponse,
   FullDocumentDetail,
   PreProcessingRule,
@@ -38,7 +43,15 @@ import escape from '../hooks/escape'
 import unescape from '../hooks/unescape'
 import StepTwo from '../index'
 
-const mockDataset = {
+const mockDataset: Pick<
+  DataSet,
+  | 'id'
+  | 'doc_form'
+  | 'data_source_type'
+  | 'embedding_model'
+  | 'embedding_model_provider'
+  | 'retrieval_model_dict'
+> = {
   id: 'test-dataset-id',
   doc_form: ChunkingMode.text,
   data_source_type: DataSourceType.FILE,
@@ -75,8 +88,9 @@ const mockDefaultEmbeddingModel = {
   model: 'text-embedding-ada-002',
 }
 // Model[] type structure for rerank model list (simplified mock)
-const mockRerankModelList: Model[] = [
+const mockRerankModelList: ProviderWithModelsResponse[] = [
   {
+    tenant_id: 'test-workspace',
     provider: 'cohere',
     icon_small: { en_US: 'cohere-icon', zh_Hans: 'cohere-icon' },
     label: { en_US: 'Cohere', zh_Hans: 'Cohere' },
@@ -104,7 +118,7 @@ vi.mock('@/app/components/header/account-setting/model-provider-page/hooks', () 
     defaultModel: mockRerankDefaultModel,
     currentModel: mockIsRerankDefaultModelValid,
   }),
-  useModelList: () => ({ data: mockEmbeddingModelList }),
+
   useDefaultModel: () => ({ data: mockDefaultEmbeddingModel }),
 }))
 
@@ -2619,4 +2633,20 @@ describe('StepTwo Component', () => {
       document.body.removeAttribute('data-public-indexing-max-segmentation-tokens-length')
     })
   })
+})
+
+vi.mock('@tanstack/react-query', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@tanstack/react-query')>()
+  return {
+    ...actual,
+    useQuery: (options: {
+      queryKey: OperationKey<
+        'query',
+        { params: GetWorkspacesCurrentModelsModelTypesByModelTypeData['path'] }
+      >
+    }) => {
+      if (!options.queryKey[0].includes('modelTypes')) return actual.useQuery(options)
+      return { data: mockEmbeddingModelList }
+    },
+  }
 })
